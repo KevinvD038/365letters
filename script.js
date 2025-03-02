@@ -1,60 +1,61 @@
 document.addEventListener("DOMContentLoaded", () => {
-    const scanBtn = document.getElementById("scan-btn");
-    const messageDiv = document.getElementById("message");
     const video = document.getElementById("camera");
-    const calendarLink = document.getElementById("calendar-link");
+    const scanButton = document.getElementById("scan-btn");
+    const messageBox = document.getElementById("message");
+    const letterContainer = document.getElementById("letter-container");
+    const letterDisplay = document.getElementById("letter-display");
     
-    function getAmsterdamDate() {
-        let now = new Date();
-        let options = { timeZone: "Europe/Amsterdam", year: "numeric", month: "2-digit", day: "2-digit" };
-        return new Intl.DateTimeFormat("fr-CA", options).format(now); // YYYY-MM-DD
-    }
-    
-    function unlockLetter(code) {
-        let today = getAmsterdamDate();
-        let unlockedDay = localStorage.getItem("unlockedDay");
+    scanButton.addEventListener("click", async () => {
+        video.classList.remove("hidden");
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        video.srcObject = stream;
         
-        if (unlockedDay === today) {
-            messageDiv.innerText = "Today's letter is already unlocked! Try again tomorrow.";
-            messageDiv.classList.remove("hidden");
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
+        
+        const scanInterval = setInterval(() => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+            const qrCode = jsQR(imageData.data, imageData.width, imageData.height);
+            
+            if (qrCode) {
+                clearInterval(scanInterval);
+                video.srcObject.getTracks().forEach(track => track.stop());
+                validateQRCode(qrCode.data);
+            }
+        }, 500);
+    });
+
+    async function validateQRCode(qrData) {
+        const today = new Date().toLocaleDateString("en-GB", { timeZone: "Europe/Amsterdam" });
+        const storedLetters = JSON.parse(localStorage.getItem("unlockedLetters")) || {};
+        
+        if (storedLetters[today]) {
+            messageBox.textContent = "Letter already unlocked. Try again tomorrow.";
+            messageBox.classList.remove("hidden");
             return;
         }
         
-        localStorage.setItem("unlockedDay", today);
-        messageDiv.innerText = "Letter unlocked for " + today + "!";
-        messageDiv.classList.remove("hidden");
-    }
-    
-    async function startScan() {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-        video.srcObject = stream;
-        video.play();
-
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-
-        function scanFrame() {
-            if (!video.videoWidth) {
-                requestAnimationFrame(scanFrame);
-                return;
-            }
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            let qrCode = jsQR(imageData.data, canvas.width, canvas.height);
-            if (qrCode) {
-                video.srcObject.getTracks().forEach(track => track.stop());
-                unlockLetter(qrCode.data);
-            } else {
-                requestAnimationFrame(scanFrame);
-            }
+        const response = await fetch("letters.json");
+        const letters = await response.json();
+        
+        const dayOfYear = getDayOfYear(new Date());
+        if (letters[dayOfYear]) {
+            storedLetters[today] = true;
+            localStorage.setItem("unlockedLetters", JSON.stringify(storedLetters));
+            letterDisplay.textContent = letters[dayOfYear];
+            letterContainer.classList.remove("hidden");
+        } else {
+            messageBox.textContent = "Invalid QR code.";
+            messageBox.classList.remove("hidden");
         }
-        requestAnimationFrame(scanFrame);
     }
     
-    scanBtn.addEventListener("click", startScan);
-    calendarLink.addEventListener("click", () => {
-        alert("Calendar feature coming soon!");
-    });
+    function getDayOfYear(date) {
+        const start = new Date(date.getFullYear(), 0, 0);
+        const diff = date - start + ((start.getTimezoneOffset() - date.getTimezoneOffset()) * 60000);
+        return Math.floor(diff / 86400000);
+    }
 });
